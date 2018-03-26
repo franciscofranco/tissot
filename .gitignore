@@ -1,0 +1,4 @@
+build.sh
+out/
+version
+upload.sh
