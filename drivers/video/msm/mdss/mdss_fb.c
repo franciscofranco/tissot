@@ -3515,7 +3515,6 @@ int mdss_fb_atomic_commit(struct fb_info *info,
 		return -EPERM;
 	}
 
-		dump_stack();
 	if ((mdss_fb_is_power_off(mfd)) &&
 		!((mfd->dcm_state == DCM_ENTER) &&
 		(mfd->panel.type == MIPI_CMD_PANEL))) {
