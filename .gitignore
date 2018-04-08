@@ -96,3 +96,8 @@ x509.genkey
 
 # Kconfig presets
 all.config
+build.sh
+net/wireguard/
+out/
+upload.sh
+version
