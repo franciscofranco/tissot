@@ -101,3 +101,4 @@ net/wireguard/
 out/
 upload.sh
 version
+upload_custom.sh
