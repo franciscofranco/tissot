@@ -1624,15 +1624,6 @@ static int cluster_changed(struct v4l2_ctrl *master)
 
 		if (ctrl == NULL)
 			continue;
-		/*
-		 * Set has_changed to false to avoid generating
-		 * the event V4L2_EVENT_CTRL_CH_VALUE
-		 */
-		if (ctrl->flags & V4L2_CTRL_FLAG_VOLATILE) {
-			ctrl->has_changed = false;
-			continue;
-		}
-
 		for (idx = 0; !ctrl_changed && idx < ctrl->elems; idx++)
 			ctrl_changed = !ctrl->type_ops->equal(ctrl, idx,
 				ctrl->p_cur, ctrl->p_new);
@@ -1682,8 +1673,10 @@ static int check_range(enum v4l2_ctrl_type type,
 }
 
 /* Validate a new control */
-static int validate_new(const struct v4l2_ctrl *ctrl, union v4l2_ctrl_ptr p_new)
+static int validate_new(const struct v4l2_ctrl *ctrl,
+			struct v4l2_ext_control *c)
 {
+	union v4l2_ctrl_ptr ptr;
 	unsigned idx;
 	int err = 0;
 
@@ -1696,14 +1689,19 @@ static int validate_new(const struct v4l2_ctrl *ctrl, union v4l2_ctrl_ptr p_new)
 		case V4L2_CTRL_TYPE_BOOLEAN:
 		case V4L2_CTRL_TYPE_BUTTON:
 		case V4L2_CTRL_TYPE_CTRL_CLASS:
+			ptr.p_s32 = &c->value;
+			return ctrl->type_ops->validate(ctrl, 0, ptr);
+
 		case V4L2_CTRL_TYPE_INTEGER64:
-			return ctrl->type_ops->validate(ctrl, 0, p_new);
+			ptr.p_s64 = &c->value64;
+			return ctrl->type_ops->validate(ctrl, 0, ptr);
 		default:
 			break;
 		}
 	}
-	for (idx = 0; !err && idx < ctrl->elems; idx++)
-		err = ctrl->type_ops->validate(ctrl, idx, p_new);
+	ptr.p = c->ptr;
+	for (idx = 0; !err && idx < c->size / ctrl->elem_size; idx++)
+		err = ctrl->type_ops->validate(ctrl, idx, ptr);
 	return err;
 }
 
@@ -3027,7 +3025,6 @@ static int validate_ctrls(struct v4l2_ext_controls *cs,
 	cs->error_idx = cs->count;
 	for (i = 0; i < cs->count; i++) {
 		struct v4l2_ctrl *ctrl = helpers[i].ctrl;
-		union v4l2_ctrl_ptr p_new;
 
 		cs->error_idx = i;
 
@@ -3041,17 +3038,7 @@ static int validate_ctrls(struct v4l2_ext_controls *cs,
 		   best-effort to avoid that. */
 		if (set && (ctrl->flags & V4L2_CTRL_FLAG_GRABBED))
 			return -EBUSY;
-		/*
-		 * Skip validation for now if the payload needs to be copied
-		 * from userspace into kernelspace. We'll validate those later.
-		 */
-		if (ctrl->is_ptr)
-			continue;
-		if (ctrl->type == V4L2_CTRL_TYPE_INTEGER64)
-			p_new.p_s64 = &cs->controls[i].value64;
-		else
-			p_new.p_s32 = &cs->controls[i].value;
-		ret = validate_new(ctrl, p_new);
+		ret = validate_new(ctrl, &cs->controls[i]);
 		if (ret)
 			return ret;
 	}
@@ -3146,11 +3133,7 @@ static int try_set_ext_ctrls(struct v4l2_fh *fh, struct v4l2_ctrl_handler *hdl,
 		/* Copy the new caller-supplied control values.
 		   user_to_new() sets 'is_new' to 1. */
 		do {
-			struct v4l2_ctrl *ctrl = helpers[idx].ctrl;
-
-			ret = user_to_new(cs->controls + idx, ctrl);
-			if (!ret && ctrl->is_ptr)
-				ret = validate_new(ctrl, ctrl->p_new);
+			ret = user_to_new(cs->controls + idx, helpers[idx].ctrl);
 			idx = helpers[idx].next;
 		} while (!ret && idx);
 
@@ -3200,10 +3183,10 @@ int v4l2_subdev_s_ext_ctrls(struct v4l2_subdev *sd, struct v4l2_ext_controls *cs
 EXPORT_SYMBOL(v4l2_subdev_s_ext_ctrls);
 
 /* Helper function for VIDIOC_S_CTRL compatibility */
-static int set_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl, u32 ch_flags)
+static int set_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl,
+		    struct v4l2_ext_control *c, u32 ch_flags)
 {
 	struct v4l2_ctrl *master = ctrl->cluster[0];
-	int ret;
 	int i;
 
 	/* Reset the 'is_new' flags of the cluster */
@@ -3211,9 +3194,8 @@ static int set_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl, u32 ch_flags)
 		if (master->cluster[i])
 			master->cluster[i]->is_new = 0;
 
-	ret = validate_new(ctrl, ctrl->p_new);
-	if (ret)
-		return ret;
+	if (c)
+		user_to_new(c, ctrl);
 
 	/* For autoclusters with volatiles that are switched from auto to
 	   manual mode we have to update the current volatile values since
@@ -3230,14 +3212,15 @@ static int set_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl, u32 ch_flags)
 static int set_ctrl_lock(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl,
 			 struct v4l2_ext_control *c)
 {
-	int ret;
+	int ret = validate_new(ctrl, c);
 
-	v4l2_ctrl_lock(ctrl);
-	user_to_new(c, ctrl);
-	ret = set_ctrl(fh, ctrl, 0);
-	if (!ret)
-		cur_to_user(c, ctrl);
-	v4l2_ctrl_unlock(ctrl);
+	if (!ret) {
+		v4l2_ctrl_lock(ctrl);
+		ret = set_ctrl(fh, ctrl, c, 0);
+		if (!ret)
+			cur_to_user(c, ctrl);
+		v4l2_ctrl_unlock(ctrl);
+	}
 	return ret;
 }
 
@@ -3245,7 +3228,7 @@ int v4l2_s_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl_handler *hdl,
 					struct v4l2_control *control)
 {
 	struct v4l2_ctrl *ctrl = v4l2_ctrl_find(hdl, control->id);
-	struct v4l2_ext_control c = { control->id };
+	struct v4l2_ext_control c;
 	int ret;
 
 	if (ctrl == NULL || !ctrl->is_int)
@@ -3274,7 +3257,7 @@ int __v4l2_ctrl_s_ctrl(struct v4l2_ctrl *ctrl, s32 val)
 	/* It's a driver bug if this happens. */
 	WARN_ON(!ctrl->is_int);
 	ctrl->val = val;
-	return set_ctrl(NULL, ctrl, 0);
+	return set_ctrl(NULL, ctrl, NULL, 0);
 }
 EXPORT_SYMBOL(__v4l2_ctrl_s_ctrl);
 
@@ -3285,7 +3268,7 @@ int __v4l2_ctrl_s_ctrl_int64(struct v4l2_ctrl *ctrl, s64 val)
 	/* It's a driver bug if this happens. */
 	WARN_ON(ctrl->is_ptr || ctrl->type != V4L2_CTRL_TYPE_INTEGER64);
 	*ctrl->p_new.p_s64 = val;
-	return set_ctrl(NULL, ctrl, 0);
+	return set_ctrl(NULL, ctrl, NULL, 0);
 }
 EXPORT_SYMBOL(__v4l2_ctrl_s_ctrl_int64);
 
@@ -3296,7 +3279,7 @@ int __v4l2_ctrl_s_ctrl_string(struct v4l2_ctrl *ctrl, const char *s)
 	/* It's a driver bug if this happens. */
 	WARN_ON(ctrl->type != V4L2_CTRL_TYPE_STRING);
 	strlcpy(ctrl->p_new.p_char, s, ctrl->maximum + 1);
-	return set_ctrl(NULL, ctrl, 0);
+	return set_ctrl(NULL, ctrl, NULL, 0);
 }
 EXPORT_SYMBOL(__v4l2_ctrl_s_ctrl_string);
 
@@ -3319,8 +3302,8 @@ EXPORT_SYMBOL(v4l2_ctrl_notify);
 int __v4l2_ctrl_modify_range(struct v4l2_ctrl *ctrl,
 			s64 min, s64 max, u64 step, s64 def)
 {
-	bool changed;
 	int ret;
+	struct v4l2_ext_control c;
 
 	lockdep_assert_held(ctrl->handler->lock);
 
@@ -3347,20 +3330,11 @@ int __v4l2_ctrl_modify_range(struct v4l2_ctrl *ctrl,
 	ctrl->maximum = max;
 	ctrl->step = step;
 	ctrl->default_value = def;
-	cur_to_new(ctrl);
-	if (validate_new(ctrl, ctrl->p_new)) {
-		if (ctrl->type == V4L2_CTRL_TYPE_INTEGER64)
-			*ctrl->p_new.p_s64 = def;
-		else
-			*ctrl->p_new.p_s32 = def;
-	}
-
-	if (ctrl->type == V4L2_CTRL_TYPE_INTEGER64)
-		changed = *ctrl->p_new.p_s64 != *ctrl->p_cur.p_s64;
-	else
-		changed = *ctrl->p_new.p_s32 != *ctrl->p_cur.p_s32;
-	if (changed)
-		ret = set_ctrl(NULL, ctrl, V4L2_EVENT_CTRL_CH_RANGE);
+	c.value = *ctrl->p_cur.p_s32;
+	if (validate_new(ctrl, &c))
+		c.value = def;
+	if (c.value != *ctrl->p_cur.p_s32)
+		ret = set_ctrl(NULL, ctrl, &c, V4L2_EVENT_CTRL_CH_RANGE);
 	else
 		send_event(NULL, ctrl, V4L2_EVENT_CTRL_CH_RANGE);
 	return ret;
