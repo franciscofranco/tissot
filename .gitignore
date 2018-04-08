@@ -2,3 +2,4 @@ build.sh
 out/
 version
 upload.sh
+upload_custom.sh
