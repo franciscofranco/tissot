@@ -3,3 +3,4 @@ out/
 version
 upload.sh
 upload_custom.sh
+build_mido.sh
