@@ -2526,11 +2526,14 @@ _error:
 	return err;
 }
 
-void snd_usb_mixer_disconnect(struct list_head *p)
+void snd_usb_mixer_disconnect(struct usb_mixer_interface *mixer)
 {
+<<<<<<< HEAD
 	struct usb_mixer_interface *mixer;
 
 	mixer = list_entry(p, struct usb_mixer_interface, list);
+=======
+>>>>>>> caf-3.18/LA.UM.6.6.r1-08300-89xx.0
 	if (mixer->disconnected)
 		return;
 	if (mixer->urb)
