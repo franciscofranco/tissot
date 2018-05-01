@@ -102,3 +102,5 @@ upload.sh
 upload_custom.sh
 version
 build_mido.sh
+build_mido-treble.sh
+build_mido-untreble.sh
