@@ -9,7 +9,6 @@
  * between multiple submitters when a shared tag map is used.
  *
  * Copyright (C) 2013-2014 Jens Axboe
- * Copyright (C) 2018 XiaoMi, Inc.
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -404,7 +403,7 @@ static void bt_for_each(struct blk_mq_hw_ctx *hctx,
 		for (bit = find_first_bit(&bm->word, bm->depth);
 		     bit < bm->depth;
 		     bit = find_next_bit(&bm->word, bm->depth, bit + 1)) {
-		     	rq = hctx->tags->rqs[off + bit];
+			rq = hctx->tags->rqs[off + bit];
 			if (rq->q == hctx->queue)
 				fn(hctx, rq, data, reserved);
 		}
