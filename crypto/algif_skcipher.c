@@ -448,7 +448,6 @@ static int skcipher_recvmsg(struct kiocb *unused, struct socket *sock,
 		char __user *from = iov->iov_base;
 
 		while (seglen) {
-
 			used = ctx->used;
 			if (!used) {
 				err = skcipher_wait_for_data(sk, flags);
@@ -469,8 +468,9 @@ static int skcipher_recvmsg(struct kiocb *unused, struct socket *sock,
 			err = -EINVAL;
 			if (!used)
 				goto free;
+
 			sgl = list_first_entry(&ctx->tsgl,
-						struct skcipher_sg_list, list);
+					       struct skcipher_sg_list, list);
 			sg = sgl->sg;
 
 			while (!sg->length)
