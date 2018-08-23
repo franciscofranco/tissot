@@ -96,3 +96,12 @@ x509.genkey
 
 # Kconfig presets
 all.config
+build.sh
+build_mido-treble.sh
+build_mido-untreble.sh
+net/wireguard/
+out/
+upload.sh
+upload_custom.sh
+upload_mido.sh
+version
