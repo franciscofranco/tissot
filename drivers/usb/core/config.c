@@ -644,7 +644,7 @@ void usb_destroy_configuration(struct usb_device *dev)
 
 	if (dev->rawdescriptors) {
 		for (i = 0; i < dev->descriptor.bNumConfigurations &&
-					i < USB_MAXCONFIG; i++)
+				i < USB_MAXCONFIG; i++)
 			kfree(dev->rawdescriptors[i]);
 
 		kfree(dev->rawdescriptors);
