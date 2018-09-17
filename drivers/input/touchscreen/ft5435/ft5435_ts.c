@@ -621,6 +621,8 @@ static int ft5435_ts_suspend(struct device *dev)
 {
 	struct ft5435_ts_data *data = g_ft5435_ts_data;
 	char i;
+	u8 reg_addr;
+	u8 reg_value;
 
 	u8 state = -1;
 	if (data->loading_fw) {
@@ -652,22 +654,26 @@ static int ft5435_ts_suspend(struct device *dev)
 	}
 #endif
 
+	reg_addr = FT_REG_ID;
+	ft5435_i2c_read(data->client, &reg_addr, 1, &reg_value, 1);
+
 	disable_irq(data->client->irq);
 
-	if (gpio_is_valid(data->pdata->reset_gpio)) {
-		gpio_set_value_cansleep(data->pdata->reset_gpio, 1);
-		msleep(300);
-	}
-	if (gpio_is_valid(data->pdata->reset_gpio)) {
-		for (i = 0; i < 10; i++) {
-			ft5x0x_write_reg(data->client, 0xa5, 0x03);
-			ft5x0x_read_reg(data->client, 0xa5, &state);
+	if (reg_value != 0x54) {
+		if (gpio_is_valid(data->pdata->reset_gpio)) {
+			gpio_set_value_cansleep(data->pdata->reset_gpio, 1);
+			msleep(300);
 
-			if ((state != 0) && (state != 1)) {
-				printk("[FTS]Ft5435 TPDwrite  OK [%d]\n", i);
-				break;
-			} else {
-				printk("[FTS]Ft5435 TPDwrite  Error[%d]\n", i);
+			for (i = 0; i < 10; i++) {
+				ft5x0x_write_reg(data->client, 0xa5, 0x03);
+				ft5x0x_read_reg(data->client, 0xa5, &state);
+
+				if ((state != 0) && (state != 1)) {
+					printk("[FTS]Ft5435 TPDwrite  OK [%d]\n", i);
+					break;
+				} else {
+					printk("[FTS]Ft5435 TPDwrite  Error[%d]\n", i);
+				}
 			}
 		}
 	}
@@ -685,6 +691,8 @@ static int ft5435_ts_resume(struct device *dev)
 		return 0;
 	}
 
+	mutex_lock(&data->report_mutex);
+
 #if defined(FOCALTECH_TP_GESTURE)
 	if (gesture_func_on)
 		disable_irq(data->client->irq);
@@ -694,10 +702,11 @@ static int ft5435_ts_resume(struct device *dev)
 	input_mt_report_slot_state(data->input_dev, MT_TOOL_FINGER, 0);
 	__set_bit(BTN_TOUCH, data->input_dev->keybit);
 	input_sync(data->input_dev);
+	mutex_unlock(&data->report_mutex);
 
 #if defined(FOCALTECH_TP_GESTURE)
 	if (gesture_func_on)
-                disable_irq_wake(data->client->irq);
+		disable_irq_wake(data->client->irq);
 #endif
 
 /*hw rst*/
@@ -709,10 +718,22 @@ static int ft5435_ts_resume(struct device *dev)
 
 	msleep(data->pdata->soft_rst_dly);
 
+	mutex_lock(&data->report_mutex);
 
 	ft5x0x_write_reg(data->client, 0x8c, 0x01);
+
+#if defined(FOCALTECH_TP_GESTURE)
+	if (gesture_func_on)
+		enable_irq_wake(data->client->irq);
+	else
+		enable_irq(data->client->irq);
+#else
 	enable_irq(data->client->irq);
+#endif
+
 	data->suspended = false;
+	mutex_unlock(&data->report_mutex);
+
 	return 0;
 }
 
